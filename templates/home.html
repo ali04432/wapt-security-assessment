@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+{% block title %}WAPT — Web Application Security, Visualized{% endblock %}
+{% block standalone %}
+<div class="wapt-site" id="top">
+  <section class="wave-hero" id="home">
+    <div class="wave-vignette" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="site-logo" href="{{ url_for('home') }}" aria-label="WAPT home">
+        <span class="site-logo-mark"><span></span><span></span><span></span></span>
+        <span class="site-logo-word">WAPT</span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a class="active" href="#home">Home</a>
+        <a href="#features">Features</a>
+        <a href="#method">Methodology</a>
+        <a href="#about">About</a>
+      </nav>
+      <a class="header-cta" href="{{ url_for('dashboard') if current_user else url_for('login') }}">
+        {{ 'Open console' if current_user else 'Sign in' }} <span aria-hidden="true">↗</span>
+      </a>
+      <a class="mobile-cta" href="{{ url_for('dashboard') if current_user else url_for('login') }}">Console ↗</a>
+    </header>
+
+    <main class="hero-content">
+      <div class="hero-eyebrow"><span class="eyebrow-pulse"></span> WEB APPLICATION SECURITY PLATFORM</div>
+      <h1>Find every weakness.<br><span>Before it becomes a threat.</span></h1>
+      <p class="hero-lead">See your application's security posture with focused assessments, clear risk signals, and practical remediation guidance.</p>
+      <div class="hero-buttons">
+        <a class="glow-button" href="{{ url_for('dashboard') if current_user else url_for('login') }}">
+          <span class="button-spark" aria-hidden="true">✳</span>
+          {{ 'Launch security console' if current_user else 'Start a security assessment' }}
+          <span class="button-arrow" aria-hidden="true">↗</span>
+        </a>
+        <a class="outline-button" href="#features">Explore WAPT <span aria-hidden="true">↓</span></a>
+      </div>
+      <div class="hero-proof">
+        <span><i></i> Controlled, non-destructive checks</span>
+        <b></b>
+        <span><i></i> Authorized testing only</span>
+      </div>
+    </main>
+
+    <div class="hero-bottom" aria-hidden="true">
+      <span>ASSESS WITH CLARITY</span>
+      <span class="bottom-line"></span>
+      <span>UNDERSTAND THE RISK</span>
+      <span class="bottom-line"></span>
+      <span>MAKE SECURITY STRONGER</span>
+    </div>
+    <div class="scroll-cue"><span></span> SCROLL TO EXPLORE</div>
+  </section>
+
+  <section class="intro-strip" id="about">
+    <div class="intro-copy">
+      <span class="section-label">THE WAPT APPROACH</span>
+      <h2>Security testing that turns<br><span>signals into action.</span></h2>
+    </div>
+    <p>WAPT brings essential web security checks into one focused workspace. Assess configurations, review findings by severity, and use the evidence to decide what to fix next.</p>
+  </section>
+
+  <section class="feature-section" id="features">
+    <div class="section-topline"><span class="section-label">BUILT FOR SECURITY VISIBILITY</span><span class="section-index">01 — PLATFORM</span></div>
+    <div class="feature-heading"><h2>Everything important.<br><span>Nothing hidden.</span></h2><p>A practical baseline for understanding common web application security weaknesses.</p></div>
+    <div class="feature-grid">
+      <article class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5M10.5 7v7M7 10.5h7"></path></svg></div>
+        <span class="feature-count">01 / ASSESS</span><h3>Security configuration</h3>
+        <p>Review security headers, HTTPS usage, certificate signals, and browser protection policies.</p>
+        <a href="{{ url_for('dashboard') if current_user else url_for('login') }}">Explore assessment <span>↗</span></a>
+      </article>
+      <article class="feature-card feature-card-hot">
+        <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 6v5.2c0 5-3.3 8.1-8 9.8-4.7-1.7-8-4.8-8-9.8V6l8-3Z"></path><path d="m8.5 12 2.2 2.2 4.8-5"></path></svg></div>
+        <span class="feature-count">02 / PRIORITIZE</span><h3>Risk-based findings</h3>
+        <p>Understand observations through severity levels, evidence, and clear recommendations.</p>
+        <a href="{{ url_for('dashboard') if current_user else url_for('login') }}">Review the workflow <span>↗</span></a>
+      </article>
+      <article class="feature-card">
+        <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg></div>
+        <span class="feature-count">03 / REPORT</span><h3>Actionable reporting</h3>
+        <p>Keep assessment history and export structured results for review and remediation.</p>
+        <a href="{{ url_for('dashboard') if current_user else url_for('login') }}">View reporting <span>↗</span></a>
+      </article>
+    </div>
+  </section>
+
+  <section class="method-section" id="method">
+    <div class="method-glow" aria-hidden="true"></div>
+    <div class="method-inner">
+      <div class="method-copy"><span class="section-label">A CONTROLLED WORKFLOW</span><h2>From first scan<br>to <span>clear next steps.</span></h2><p>Use WAPT as a disciplined first layer of security assessment. Findings are indicators to validate—not a guarantee that a vulnerability can be exploited.</p>
+        <a class="method-link" href="{{ url_for('dashboard') if current_user else url_for('login') }}">Enter the assessment workspace <span>↗</span></a>
+      </div>
+      <div class="method-steps">
+        <div class="method-step"><span>01</span><div><h3>Set the authorized scope</h3><p>Choose an application you own or have explicit permission to assess.</p></div><small>DEFINE</small></div>
+        <div class="method-step"><span>02</span><div><h3>Run safe baseline checks</h3><p>Collect a focused set of non-destructive security indicators.</p></div><small>ASSESS</small></div>
+        <div class="method-step"><span>03</span><div><h3>Validate and improve</h3><p>Verify observations manually and apply appropriate remediation.</p></div><small>IMPROVE</small></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="final-cta">
+    <div class="cta-orb" aria-hidden="true"></div>
+    <span class="section-label">YOUR SECURITY WORKSPACE IS READY</span>
+    <h2>Make your next security review<br><span>count.</span></h2>
+    <p>Start with a controlled assessment of an application you are authorized to test.</p>
+    <a class="glow-button" href="{{ url_for('dashboard') if current_user else url_for('login') }}">{{ 'Open WAPT console' if current_user else 'Get started with WAPT' }} <span class="button-arrow">↗</span></a>
+  </section>
+
+  <footer class="site-footer">
+    <a class="site-logo" href="{{ url_for('home') }}"><span class="site-logo-mark"><span></span><span></span><span></span></span><span class="site-logo-word">WAPT</span></a>
+    <p>Web Application Penetration Testing<br>&amp; Vulnerability Assessment</p>
+    <div class="footer-nav"><a href="#features">Features</a><a href="#method">Methodology</a><a href="{{ url_for('login') }}">Administrator login</a></div>
+    <small>© {{ now_label.split(' · ')[0][-4:] }} WAPT · Authorized testing only</small>
+  </footer>
+</div>
+{% endblock %}

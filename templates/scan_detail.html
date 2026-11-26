@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}Assessment #{{ scan.id }} · WAPT Security Console{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="{{ url_for('dashboard') }}">Overview</a><span>/</span><span>Assessment #{{ scan.id }}</span></div>
+<section class="page-heading report-heading">
+  <div><span class="eyebrow">ASSESSMENT REPORT / #{{ scan.id }}</span><h1>Target security report</h1><p class="report-target">{{ scan.target }}</p></div>
+  <div class="report-actions"><a class="button secondary" href="{{ url_for('export_csv', scan_id=scan.id) }}">Export CSV</a><a class="button primary" href="{{ url_for('export_json', scan_id=scan.id) }}">Export JSON <span>↓</span></a></div>
+</section>
+<section class="report-summary-grid">
+  <article class="panel score-panel"><span class="eyebrow">BASELINE SECURITY SCORE</span><div class="score-main {% if scan.score < 60 %}score-low{% elif scan.score < 80 %}score-mid{% else %}score-high{% endif %}">{{ scan.score }}<small>/100</small></div><div class="score-track"><span class="score-progress" data-score="{{ scan.score }}"></span></div><p>Heuristic score based on the number and severity of detected baseline findings. It is not a formal CVSS score.</p></article>
+  <article class="panel report-stat"><span class="eyebrow">HTTP RESPONSE</span><strong>{{ scan.http_status or '—' }}</strong><small>Final status code</small><div class="stat-sub">Response time: {{ scan.response_time_ms or '—' }} ms</div></article>
+  <article class="panel report-stat"><span class="eyebrow">SCAN DURATION</span><strong>{{ scan.duration_seconds or '—' }}<small> sec</small></strong><small>Elapsed assessment time</small><div class="stat-sub">{{ scan.created_at[:19].replace('T', ' ') }} UTC</div></article>
+</section>
+<section class="severity-grid">
+  {% for severity, label in [('critical','Critical'),('high','High'),('medium','Medium'),('low','Low'),('info','Info')] %}
+  <article class="severity-card severity-{{ severity }}"><span>{{ label }}</span><strong>{{ scan.counts.get(severity, 0) }}</strong></article>
+  {% endfor %}
+</section>
+<section class="panel findings-panel">
+  <div class="panel-heading"><div><span class="eyebrow">TECHNICAL OBSERVATIONS</span><h2>Findings and recommendations</h2></div><span class="history-count">{{ scan.findings|length }} total</span></div>
+  {% if scan.findings %}
+    <div class="finding-list">
+    {% for finding in scan.findings %}
+      <article class="finding-card">
+        <div class="finding-top"><div><span class="severity-badge {{ finding.severity }}">{{ finding.severity|upper }}</span><span class="finding-category">{{ finding.category }}</span><h3>{{ finding.title }}</h3></div><span class="finding-cwe">{{ finding.cwe or 'BASELINE CHECK' }}</span></div>
+        <p class="finding-description">{{ finding.description }}</p>
+        <div class="finding-evidence"><span>EVIDENCE</span><p>{{ finding.evidence }}</p></div>
+        <div class="finding-remediation"><span>RECOMMENDED ACTION</span><p>{{ finding.recommendation }}</p></div>
+      </article>
+    {% endfor %}
+    </div>
+  {% else %}<div class="empty-state"><span class="empty-mark">✓</span><strong>No baseline findings detected</strong><p>This does not prove that the application is vulnerability-free. Manual and deeper testing are still recommended.</p></div>{% endif %}
+</section>
+<section class="report-note"><strong>Scope and limitations</strong><p>{{ scan.scope_note }} This report does not perform authenticated crawling, source-code analysis, SQL injection testing, XSS exploitation, business-logic testing, or a full OWASP ASVS review. Validate each observation manually before classifying it as a confirmed vulnerability.</p></section>
+{% endblock %}

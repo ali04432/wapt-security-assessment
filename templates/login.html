@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}Sign in · WAPT Security Console{% endblock %}
+{% block standalone %}
+<div class="login-page wave-surface">
+  <div class="login-orbit orbit-one"></div><div class="login-orbit orbit-two"></div>
+  <section class="login-card">
+    <a class="brand login-brand" href="{{ url_for('home') }}"><span class="brand-mark">W</span><span><strong>WAPT</strong><small>SECURITY CONSOLE</small></span></a>
+    <span class="eyebrow">WEB APPLICATION SECURITY</span>
+    <h1>Assessment starts<br>with visibility.</h1>
+    <p class="login-copy">Sign in to review assessment history, identify security gaps, and track remediation.</p>
+    <form method="post" class="login-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="username">Username</label><input id="username" name="username" autocomplete="username" required placeholder="Enter your username">
+      <label for="password">Password</label><input id="password" type="password" name="password" autocomplete="current-password" required placeholder="Enter your password">
+      <button class="button primary full-width" type="submit">Sign in <span>→</span></button>
+    </form>
+    <div class="login-foot"><span class="lock-symbol">▣</span> Local administrator access · Authorized use only</div>
+  </section>
+  <div class="login-ambient"><span>WAPT / 01</span><span>DEFENSIVE SECURITY ASSESSMENT</span></div>
+</div>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block title %}Overview · WAPT Security Console{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><span class="eyebrow">Overview / Control center</span><h1>Security overview</h1><p>Run a controlled baseline assessment and review the issues that need attention.</p></div>
+  <a class="button secondary" href="#new-scan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> New assessment</a>
+</section>
+<section class="metric-grid">
+  <article class="metric-card"><div class="metric-top"><span class="metric-label">Completed assessments</span><span class="metric-index">01</span></div><div class="metric-value">{{ total_scans }}</div><div class="metric-foot">All-time scan history</div></article>
+  <article class="metric-card"><div class="metric-top"><span class="metric-label">Recorded findings</span><span class="metric-index">02</span></div><div class="metric-value">{{ open_findings }}</div><div class="metric-foot">Across completed assessments</div></article>
+  <article class="metric-card metric-card-risk"><div class="metric-top"><span class="metric-label">High-priority findings</span><span class="metric-index">03</span></div><div class="metric-value">{{ high_risk }}</div><div class="metric-foot">Critical and high severity</div></article>
+  <article class="metric-card"><div class="metric-top"><span class="metric-label">Average security score</span><span class="metric-index">04</span></div><div class="metric-value">{% if average_score is not none %}{{ average_score }}<small>/100</small>{% else %}—{% endif %}</div><div class="metric-foot">Higher score indicates fewer baseline issues</div></article>
+</section>
+<section class="workspace-grid">
+  <article class="panel scan-panel" id="new-scan">
+    <div class="panel-heading"><div><span class="eyebrow">Start a new check</span><h2>Target assessment</h2></div><span class="panel-tag"><span class="status-dot"></span> Safe mode</span></div>
+    <p class="panel-intro">Enter the website you are authorized to assess. The scanner follows redirects safely and performs a limited set of non-destructive checks.</p>
+    <form method="post" action="{{ url_for('create_scan') }}" class="scan-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="target">Target URL</label>
+      <div class="url-input-wrap"><span class="url-prefix">URL</span><input id="target" name="target" placeholder="https://your-domain.com" maxlength="2048" required></div>
+      <div class="form-hint">Examples: https://example.com · http://127.0.0.1:3000</div>
+      <label class="authorization-check"><input type="checkbox" name="authorized" value="yes" required><span>I own this application or have explicit permission to perform this assessment.</span></label>
+      <button class="button primary" type="submit">Start security assessment <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </form>
+    <div class="scan-scope"><span class="scope-shield">!</span><p><strong>Assessment scope</strong>Checks response headers, TLS, cookie attributes, mixed content, password-form transport, and a small set of common exposed resources. No password guessing or destructive payloads.</p></div>
+  </article>
+  <article class="panel methodology-panel">
+    <div class="panel-heading"><div><span class="eyebrow">Assessment method</span><h2>What gets reviewed</h2></div></div>
+    <div class="method-list">
+      <div class="method-item"><span class="method-number">01</span><div><strong>Transport security</strong><p>HTTPS use, certificate validity, HSTS and mixed content.</p></div><span class="method-status">Check</span></div>
+      <div class="method-item"><span class="method-number">02</span><div><strong>Security configuration</strong><p>CSP, clickjacking, MIME sniffing and browser policies.</p></div><span class="method-status">Check</span></div>
+      <div class="method-item"><span class="method-number">03</span><div><strong>Session management</strong><p>Secure, HttpOnly and SameSite cookie attributes.</p></div><span class="method-status">Check</span></div>
+      <div class="method-item"><span class="method-number">04</span><div><strong>Exposure indicators</strong><p>Known backup, environment, repository and directory-index signatures.</p></div><span class="method-status">Check</span></div>
+    </div>
+    <div class="method-note"><span>i</span><p>Findings are indicators for manual validation, not a guarantee that a vulnerability can be exploited.</p></div>
+  </article>
+</section>
+<section class="panel history-panel">
+  <div class="panel-heading"><div><span class="eyebrow">Assessment log</span><h2>Recent assessments</h2></div><span class="history-count">{{ recent|length }} recent</span></div>
+  {% if recent %}
+  <div class="table-wrap"><table><thead><tr><th>Target</th><th>Date</th><th>Status</th><th>Findings</th><th>Security score</th><th></th></tr></thead><tbody>
+  {% for scan in recent %}
+    <tr><td><div class="target-cell"><span class="target-mark">Web</span><span>{{ scan.target }}</span></div></td><td class="muted-cell">{{ scan.created_at[:19].replace('T', ' ') }} UTC</td><td><span class="status-pill completed">Completed</span></td><td><strong>{{ scan.counts.values()|sum }}</strong> <span class="muted-cell">items</span></td><td><span class="score-inline {% if scan.score is not none and scan.score < 60 %}score-low{% elif scan.score is not none and scan.score < 80 %}score-mid{% else %}score-high{% endif %}">{% if scan.score is not none %}{{ scan.score }}/100{% else %}—{% endif %}</span></td><td><a class="table-link" href="{{ url_for('scan_detail', scan_id=scan.id) }}">View report</a></td></tr>
+  {% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty-state"><span class="empty-mark">—</span><strong>No assessments yet</strong><p>Your completed scan reports will appear here.</p><a href="#new-scan">Start your first assessment →</a></div>{% endif %}
+</section>
+<div class="disclaimer-line">Use this tool only on systems you own or are explicitly authorized to test. Unauthorized testing may violate law or policy.</div>
+{% endblock %}

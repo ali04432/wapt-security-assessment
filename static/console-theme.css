@@ -1,0 +1,110 @@
+/* Dashboard console theme: quiet ink surfaces with one amber safety accent. */
+:root {
+  --bg: #0b0d14;
+  --sidebar: #080a10;
+  --panel: #11141c;
+  --panel2: #171b25;
+  --line: rgba(238, 240, 245, 0.08);
+  --text: #eef0f5;
+  --muted: #7a8296;
+  --soft: #a3a9b8;
+  --accent: #d9a85f;
+  --accent-dark: #4a3822;
+  --blue: #9eb4ca;
+  --gold: #e6ad62;
+  --red: #e5484d;
+  --orange: #c98d4b;
+}
+
+.app-shell,
+.main-area,
+.topbar {
+  background: var(--bg);
+}
+.sidebar {
+  background: var(--sidebar);
+  border-right-color: var(--line);
+  backdrop-filter: none;
+}
+.brand-mark {
+  border-color: rgba(239, 189, 114, 0.36);
+  background: #151922;
+  box-shadow: none;
+}
+.nav-link.active,
+.nav-link:hover {
+  background: #171b25;
+  box-shadow: none;
+}
+.scope-card {
+  background: #11141c;
+  border-color: var(--line);
+  box-shadow: none;
+}
+.scope-dot,
+.live-indicator {
+  background: var(--accent);
+  box-shadow: none;
+}
+.topbar {
+  border-bottom-color: var(--line);
+  backdrop-filter: none;
+}
+
+.metric-card,
+.panel {
+  background: #11141c;
+  border-color: var(--line);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.metric-card:before,
+.panel:before {
+  display: none;
+}
+.metric-card:hover {
+  transform: none;
+  border-color: rgba(238, 240, 245, 0.12);
+}
+.button.primary {
+  background: #edeff3;
+  color: #111318;
+  border-color: #edeff3;
+  box-shadow: none;
+}
+.button.primary:hover {
+  background: #ffffff;
+  color: #111318;
+  box-shadow: none;
+  transform: none;
+}
+.button.secondary {
+  background: #171b25;
+  border-color: var(--line);
+  color: var(--text);
+  box-shadow: none;
+}
+.url-input-wrap {
+  border-color: rgba(238, 240, 245, 0.12);
+  background: #0d1017;
+}
+.url-input-wrap:focus-within {
+  border-color: rgba(239, 189, 114, 0.48);
+  box-shadow: none;
+}
+.panel-tag,
+.history-count,
+.status-pill.completed {
+  background: #171b25;
+  box-shadow: none;
+}
+
+.surface-wave-canvas,
+.wave-surface,
+.security-cursor-halo {
+  display: none !important;
+}
+*, *::before, *::after {
+  animation: none !important;
+  transition-duration: 160ms !important;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
