@@ -512,6 +512,10 @@ tbody tr:hover { background: #141821; }
 .finding-card h3 { margin: 8px 0 0; font-size: 14px; font-weight: 500; }
 .finding-cwe { color: var(--muted); font-size: 10px; }
 .finding-description { color: var(--secondary); font-size: 12px; margin: 8px 0 12px; }
+.coverage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
+.coverage-row { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--secondary); }
+.coverage-row strong { color: var(--muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; font-weight: 400; }
+.recon-summary { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 16px; color: var(--muted); font-size: 11px; }
 .finding-evidence, .finding-remediation { padding: 10px 12px; border-radius: 8px; margin-top: 8px; border: 1px solid var(--line); }
 .finding-evidence { background: #11141c; }
 .finding-remediation { background: #101711; }
@@ -574,4 +578,5 @@ tbody tr:hover { background: #141821; }
   .panel { padding: 16px; }
   .scan-form .button { width: 100%; }
   .login-card { padding: 24px; }
+  .coverage-grid { grid-template-columns: 1fr; }
 }

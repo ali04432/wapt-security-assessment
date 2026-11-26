@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from flask import (Flask, abort, flash, g, make_response, redirect, render_template,
                    request, send_file, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
+from report_generator import generate_pdf
 
 from scanner import ScanError, scan_site
 
@@ -74,7 +75,11 @@ def init_db() -> None:
             counts_json TEXT NOT NULL DEFAULT '{}',
             scope_note TEXT,
             error TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            scanner_version TEXT,
+            methodology_version TEXT,
+            coverage_json TEXT NOT NULL DEFAULT '{}',
+            assessment_json TEXT NOT NULL DEFAULT '{}'
         );
         CREATE TABLE IF NOT EXISTS findings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,11 +90,43 @@ def init_db() -> None:
             description TEXT NOT NULL,
             evidence TEXT NOT NULL,
             recommendation TEXT NOT NULL,
-            cwe TEXT
+            cwe TEXT,
+            affected_url TEXT,
+            confidence TEXT,
+            fingerprint TEXT,
+            observation_type TEXT,
+            impact TEXT,
+            verification TEXT,
+            detection_method TEXT,
+            detected_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_scans_created ON scans(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_findings_scan ON findings(scan_id);
     """)
+    scan_columns = {row[1] for row in db.execute("PRAGMA table_info(scans)").fetchall()}
+    scan_migrations = {
+        "scanner_version": "TEXT",
+        "methodology_version": "TEXT",
+        "coverage_json": "TEXT NOT NULL DEFAULT '{}'",
+        "assessment_json": "TEXT NOT NULL DEFAULT '{}'",
+    }
+    for column, column_type in scan_migrations.items():
+        if column not in scan_columns:
+            db.execute(f"ALTER TABLE scans ADD COLUMN {column} {column_type}")
+    finding_columns = {row[1] for row in db.execute("PRAGMA table_info(findings)").fetchall()}
+    finding_migrations = {
+        "affected_url": "TEXT",
+        "confidence": "TEXT",
+        "fingerprint": "TEXT",
+        "observation_type": "TEXT",
+        "impact": "TEXT",
+        "verification": "TEXT",
+        "detection_method": "TEXT",
+        "detected_at": "TEXT",
+    }
+    for column, column_type in finding_migrations.items():
+        if column not in finding_columns:
+            db.execute(f"ALTER TABLE findings ADD COLUMN {column} {column_type}")
     user_count = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if user_count == 0:
         username = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
@@ -147,6 +184,8 @@ def login_required(view: Callable):
 def scan_row_to_dict(row: sqlite3.Row) -> dict[str, object]:
     item = dict(row)
     item["counts"] = json.loads(item.pop("counts_json") or "{}")
+    item["coverage"] = json.loads(item.pop("coverage_json") or "{}")
+    item["assessment"] = json.loads(item.pop("assessment_json") or "{}")
     return item
 
 
@@ -228,17 +267,31 @@ def create_scan():
     try:
         result = scan_site(target)
         cursor = db.execute(
-            "INSERT INTO scans (target, final_url, status, http_status, score, duration_seconds, response_time_ms, counts_json, scope_note, created_at) VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?)",
+            """INSERT INTO scans (
+                target, final_url, status, http_status, score, duration_seconds,
+                response_time_ms, counts_json, scope_note, created_at,
+                scanner_version, methodology_version, coverage_json, assessment_json
+            ) VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (result["target"], result["final_url"], result["http_status"], result["score"],
              result["duration_seconds"], result["response_time_ms"], json.dumps(result["counts"]),
-             result["scope_note"], created_at),
+             result["scope_note"], created_at, result["scanner_version"],
+             result["methodology_version"], json.dumps(result["coverage"]),
+             json.dumps({"reconnaissance": result["reconnaissance"], "observations": result["observations"]}, ensure_ascii=False)),
         )
         scan_id = cursor.lastrowid
         for finding in result["findings"]:
             db.execute(
-                "INSERT INTO findings (scan_id, title, category, severity, description, evidence, recommendation, cwe) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                """INSERT INTO findings (
+                    scan_id, title, category, severity, description, evidence,
+                    recommendation, cwe, affected_url, confidence, fingerprint,
+                    observation_type, impact, verification, detection_method, detected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (scan_id, finding["title"], finding["category"], finding["severity"],
-                 finding["description"], finding["evidence"], finding["recommendation"], finding["cwe"]),
+                 finding["description"], finding["evidence"], finding["recommendation"],
+                 finding["cwe"], finding.get("affected_url", ""), finding.get("confidence", ""),
+                 finding.get("fingerprint", ""), finding.get("observation_type", ""),
+                 finding.get("impact", ""), finding.get("verification", ""),
+                 finding.get("detection_method", ""), finding.get("detected_at", "")),
             )
         db.commit()
         flash("Assessment completed. Review the findings and remediation guidance.", "success")
@@ -261,6 +314,67 @@ def scan_detail(scan_id: int):
     return render_template("scan_detail.html", scan=scan)
 
 
+def compare_assessments(previous: dict[str, object], current: dict[str, object]) -> dict[str, object]:
+    previous_by_fingerprint = {
+        str(item.get("fingerprint") or ""): item
+        for item in previous["findings"]
+        if item.get("fingerprint")
+    }
+    current_by_fingerprint = {
+        str(item.get("fingerprint") or ""): item
+        for item in current["findings"]
+        if item.get("fingerprint")
+    }
+    new = [item for key, item in current_by_fingerprint.items() if key not in previous_by_fingerprint]
+    persistent = [item for key, item in current_by_fingerprint.items() if key in previous_by_fingerprint]
+    current_tested = current.get("coverage", {}).get("checks", {})
+    resolved = []
+    for key, item in previous_by_fingerprint.items():
+        if key in current_by_fingerprint:
+            continue
+        category = str(item.get("category", ""))
+        title = str(item.get("title", ""))
+        relevant_check_tested = any(
+            category.lower() in str(check_name).lower()
+            or str(check_name).lower() in category.lower()
+            or str(check_name).lower() in title.lower()
+            for check_name, status in current_tested.items()
+            if status == "tested"
+        )
+        if relevant_check_tested:
+            resolved.append(item)
+    changed = []
+    for key, item in current_by_fingerprint.items():
+        old = previous_by_fingerprint.get(key)
+        if old and (old.get("severity") != item.get("severity") or old.get("evidence") != item.get("evidence")):
+            changed.append({"previous": old, "current": item})
+    return {
+        "previous": previous,
+        "current": current,
+        "new": new,
+        "resolved": resolved,
+        "persistent": persistent,
+        "changed": changed,
+    }
+
+
+@app.get("/scan/<int:scan_id>/compare")
+@login_required
+def compare_latest(scan_id: int):
+    current = get_scan_or_404(scan_id)
+    previous_row = get_db().execute(
+        "SELECT id FROM scans WHERE target = ? AND id != ? AND status = 'completed' "
+        "ORDER BY created_at DESC LIMIT 1",
+        (current["target"], scan_id),
+    ).fetchone()
+    if not previous_row:
+        flash("No previous assessment for this target is available to compare.", "error")
+        return redirect(url_for("scan_detail", scan_id=scan_id))
+    previous = get_scan_or_404(previous_row["id"])
+    comparison = compare_assessments(previous, current)
+    return render_template("scan_comparison.html", scan=current, comparison=comparison)
+
+
 @app.get("/scan/<int:scan_id>/export.json")
 @login_required
 def export_json(scan_id: int):
@@ -270,6 +384,8 @@ def export_json(scan_id: int):
         "status": scan["status"], "http_status": scan["http_status"], "score": scan["score"],
         "duration_seconds": scan["duration_seconds"], "response_time_ms": scan["response_time_ms"],
         "counts": scan["counts"], "created_at": scan["created_at"], "scope_note": scan["scope_note"],
+        "coverage": scan["coverage"], "scanner_version": scan["scanner_version"],
+        "methodology_version": scan["methodology_version"], "assessment": scan["assessment"],
         "findings": scan["findings"],
     }
     content = json.dumps(payload, indent=2, ensure_ascii=False)
@@ -283,17 +399,37 @@ def export_csv(scan_id: int):
     scan = get_scan_or_404(scan_id)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Scan ID", "Target", "Score", "Severity", "Category", "Finding", "Description", "Evidence", "Recommendation", "CWE"])
+    writer.writerow(["Scan ID", "Target", "Final URL", "Score", "Severity", "Category", "Finding",
+                     "Affected URL", "Confidence", "Observation Type", "Description", "Evidence",
+                     "Impact", "Recommendation", "Verification", "Detection Method", "CWE", "Fingerprint"])
     if scan["findings"]:
         for item in scan["findings"]:
-            writer.writerow([scan["id"], scan["target"], scan["score"], item["severity"], item["category"],
-                             item["title"], item["description"], item["evidence"], item["recommendation"], item["cwe"]])
+            writer.writerow([scan["id"], scan["target"], scan["final_url"], scan["score"], item["severity"], item["category"],
+                             item["title"], item.get("affected_url", ""), item.get("confidence", ""),
+                             item.get("observation_type", ""), item["description"], item["evidence"],
+                             item.get("impact", ""), item["recommendation"], item.get("verification", ""),
+                             item.get("detection_method", ""), item["cwe"], item.get("fingerprint", "")])
     else:
-        writer.writerow([scan["id"], scan["target"], scan["score"], "none", "", "No findings recorded", "", "", "", ""])
+        writer.writerow([scan["id"], scan["target"], scan["final_url"], scan["score"], "none", "",
+                         "No findings recorded", "", "", "", "", "", "", "", "", "", "", ""])
     response = make_response("\ufeff" + output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
     response.headers["Content-Disposition"] = f'attachment; filename="wapt-scan-{scan_id}.csv"'
     return response
+
+
+@app.get("/scan/<int:scan_id>/export.pdf")
+@login_required
+def export_pdf(scan_id: int):
+    scan = get_scan_or_404(scan_id)
+    pdf = generate_pdf(scan)
+    return send_file(
+        pdf,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"wapt-scan-{scan_id}.pdf",
+        last_modified=None,
+    )
 
 
 @app.errorhandler(400)

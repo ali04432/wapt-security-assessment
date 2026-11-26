@@ -4,10 +4,14 @@
 <div class="breadcrumb"><a href="{{ url_for('dashboard') }}">Overview</a><span>/</span><span>Assessment #{{ scan.id }}</span></div>
 <section class="page-heading report-heading">
   <div><span class="eyebrow">ASSESSMENT REPORT / #{{ scan.id }}</span><h1>Target security report</h1><p class="report-target">{{ scan.target }}</p></div>
-  <div class="report-actions"><a class="button secondary" href="{{ url_for('export_csv', scan_id=scan.id) }}">Export CSV</a><a class="button primary" href="{{ url_for('export_json', scan_id=scan.id) }}">Export JSON <span>↓</span></a></div>
+  <div class="report-actions"><a class="button secondary" href="{{ url_for('compare_latest', scan_id=scan.id) }}">Compare</a><a class="button secondary" href="{{ url_for('export_csv', scan_id=scan.id) }}">CSV</a><a class="button secondary" href="{{ url_for('export_pdf', scan_id=scan.id) }}">PDF</a><a class="button primary" href="{{ url_for('export_json', scan_id=scan.id) }}">JSON <span>↓</span></a></div>
 </section>
 <section class="report-summary-grid">
-  <article class="panel score-panel"><span class="eyebrow">BASELINE SECURITY SCORE</span><div class="score-main {% if scan.score < 60 %}score-low{% elif scan.score < 80 %}score-mid{% else %}score-high{% endif %}">{{ scan.score }}<small>/100</small></div><div class="score-track"><span class="score-progress" data-score="{{ scan.score }}"></span></div><p>Heuristic score based on the number and severity of detected baseline findings. It is not a formal CVSS score.</p></article>
+  <article class="panel score-panel"><span class="eyebrow">Baseline security score</span>
+    {% if scan.score is not none %}<div class="score-main {% if scan.score < 60 %}score-low{% elif scan.score < 80 %}score-mid{% else %}score-high{% endif %}">{{ scan.score }}<small>/100</small></div><div class="score-track"><span class="score-progress" data-score="{{ scan.score }}"></span></div>
+    {% else %}<div class="score-main">Insufficient coverage</div>{% endif %}
+    <p>Evidence-weighted baseline score based on unique findings and assessment coverage. It is not a formal CVSS score or security guarantee.</p>
+  </article>
   <article class="panel report-stat"><span class="eyebrow">HTTP RESPONSE</span><strong>{{ scan.http_status or '—' }}</strong><small>Final status code</small><div class="stat-sub">Response time: {{ scan.response_time_ms or '—' }} ms</div></article>
   <article class="panel report-stat"><span class="eyebrow">SCAN DURATION</span><strong>{{ scan.duration_seconds or '—' }}<small> sec</small></strong><small>Elapsed assessment time</small><div class="stat-sub">{{ scan.created_at[:19].replace('T', ' ') }} UTC</div></article>
 </section>
@@ -17,15 +21,33 @@
   {% endfor %}
 </section>
 <section class="panel findings-panel">
+  <div class="panel-heading"><div><span class="eyebrow">Assessment coverage</span><h2>Checks and scope</h2></div><span class="history-count">{{ scan.coverage.get('percentage', 0) }}% tested</span></div>
+  <div class="coverage-grid">
+    {% for name, status in scan.coverage.get('checks', {}).items() %}
+    <div class="coverage-row"><span>{{ name }}</span><strong>{{ status|replace('_', ' ')|title }}</strong></div>
+    {% endfor %}
+  </div>
+  {% if scan.assessment.reconnaissance %}
+  <div class="recon-summary">
+    <span>Final URL: {{ scan.assessment.reconnaissance.final_url or scan.final_url or '—' }}</span>
+    <span>Pages assessed: {{ scan.coverage.get('pages_assessed', 0) }}</span>
+    <span>Content type: {{ scan.assessment.reconnaissance.content_type or 'unknown' }}</span>
+  </div>
+  {% endif %}
+</section>
+<section class="panel findings-panel">
   <div class="panel-heading"><div><span class="eyebrow">TECHNICAL OBSERVATIONS</span><h2>Findings and recommendations</h2></div><span class="history-count">{{ scan.findings|length }} total</span></div>
   {% if scan.findings %}
     <div class="finding-list">
     {% for finding in scan.findings %}
       <article class="finding-card">
-        <div class="finding-top"><div><span class="severity-badge {{ finding.severity }}">{{ finding.severity|upper }}</span><span class="finding-category">{{ finding.category }}</span><h3>{{ finding.title }}</h3></div><span class="finding-cwe">{{ finding.cwe or 'BASELINE CHECK' }}</span></div>
+        <div class="finding-top"><div><span class="severity-badge {{ finding.severity }}">{{ finding.severity|upper }}</span><span class="finding-category">{{ finding.category }}</span><h3>{{ finding.title }}</h3></div><span class="finding-cwe">{{ finding.confidence|default('potential', true)|title }} · {{ finding.cwe or 'Baseline check' }}</span></div>
+        {% if finding.affected_url %}<p class="finding-description"><strong>Affected resource:</strong> {{ finding.affected_url }}</p>{% endif %}
         <p class="finding-description">{{ finding.description }}</p>
-        <div class="finding-evidence"><span>EVIDENCE</span><p>{{ finding.evidence }}</p></div>
-        <div class="finding-remediation"><span>RECOMMENDED ACTION</span><p>{{ finding.recommendation }}</p></div>
+        <div class="finding-evidence"><span>What the scanner observed</span><p>{{ finding.evidence }}</p></div>
+        {% if finding.impact %}<div class="finding-evidence"><span>Why this matters</span><p>{{ finding.impact }}</p></div>{% endif %}
+        <div class="finding-remediation"><span>How to remediate</span><p>{{ finding.recommendation }}</p></div>
+        {% if finding.verification %}<div class="finding-evidence"><span>How to verify the fix</span><p>{{ finding.verification }}</p></div>{% endif %}
       </article>
     {% endfor %}
     </div>

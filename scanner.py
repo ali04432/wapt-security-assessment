@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import socket
 import ssl
@@ -9,7 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
 import requests
 
@@ -17,6 +18,8 @@ USER_AGENT = "WAPT-LabScanner/1.0 (+authorized defensive assessment)"
 MAX_REDIRECTS = 4
 REQUEST_TIMEOUT = (4, 7)
 MAX_PAGE_BYTES = 256_000
+MAX_CRAWL_PAGES = 8
+MAX_CRAWL_DEPTH = 1
 
 
 class ScanError(Exception):
@@ -38,14 +41,30 @@ class PageParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.mixed_content: list[str] = []
         self.forms: list[dict[str, object]] = []
+        self.links: list[str] = []
+        self.meta: list[dict[str, str]] = []
+        self.scripts: list[str] = []
+        self.api_references: list[str] = []
+        self.title = ""
+        self._in_title = False
         self._form: dict[str, object] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key.lower(): value or "" for key, value in attrs}
+        if tag.lower() == "meta":
+            self.meta.append({key: value for key, value in values.items() if key in {"name", "property", "content"}})
+        if tag.lower() == "script":
+            src = values.get("src", "").strip()
+            if src:
+                self.scripts.append(src)
         for attr in ("src", "href", "action", "poster"):
             value = values.get(attr, "").strip()
             if value.lower().startswith("http://"):
                 self.mixed_content.append(value)
+            if attr in {"href", "src"} and value:
+                self.links.append(value)
+        if tag.lower() == "title":
+            self._in_title = True
         if tag.lower() == "form":
             self._form = {"action": values.get("action", ""), "method": values.get("method", "get").lower(), "has_password": False}
             self.forms.append(self._form)
@@ -54,8 +73,14 @@ class PageParser(HTMLParser):
                 self._form["has_password"] = True
 
     def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "title":
+            self._in_title = False
         if tag.lower() == "form":
             self._form = None
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title += data
 
 
 def _resolve_addresses(hostname: str) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
@@ -186,8 +211,11 @@ def _snapshot_request(session: requests.Session, url: str, max_bytes: int = MAX_
     raise ScanError("Could not follow the target redirect chain safely.")
 
 
-def _finding(title: str, category: str, severity: str, description: str, evidence: str, recommendation: str, cwe: str = "") -> dict[str, str]:
-    return {
+def _finding(title: str, category: str, severity: str, description: str, evidence: str,
+             recommendation: str, cwe: str = "", *, affected_url: str = "",
+             confidence: str = "confirmed", observation_type: str = "confirmed_vulnerability",
+             impact: str = "", verification: str = "", detection_method: str = "") -> dict[str, str]:
+    finding = {
         "title": title,
         "category": category,
         "severity": severity,
@@ -195,7 +223,18 @@ def _finding(title: str, category: str, severity: str, description: str, evidenc
         "evidence": evidence[:500],
         "recommendation": recommendation,
         "cwe": cwe,
+        "affected_url": affected_url,
+        "confidence": confidence,
+        "observation_type": observation_type,
+        "impact": impact or description,
+        "verification": verification or "Compare the response and configuration again after the remediation.",
+        "detection_method": detection_method or "HTTP response inspection",
+        "detected_at": datetime.now(timezone.utc).isoformat(),
     }
+    fingerprint_source = f"{category}|{title}|{affected_url}|{evidence[:240]}"
+    import hashlib
+    finding["fingerprint"] = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()[:16]
+    return finding
 
 
 def check_tls(hostname: str, port: int) -> list[dict[str, str]]:
@@ -306,7 +345,12 @@ def _inspect_headers(snapshot: ResponseSnapshot, findings: list[dict[str, str]])
             "Permissive CORS origin policy", "Access Control", severity,
             "The response allows cross-origin requests from any origin. This may be intentional for public resources, but should be reviewed.",
             f"Access-Control-Allow-Origin: *; Allow-Credentials: {cors_credentials or 'not set'}.",
-            "Use an explicit allowlist of trusted origins for private or user-specific data. Do not combine wildcard origins with credentialed access.", "CWE-942"))
+            "Use an explicit allowlist of trusted origins for private or user-specific data. Do not combine wildcard origins with credentialed access.",
+            "CWE-942", affected_url=snapshot.url, confidence="potential",
+            observation_type="potential_vulnerability",
+            impact="A cross-origin caller may read this response if the resource contains sensitive or user-specific data.",
+            verification="Send a controlled Origin header and verify whether only approved origins are returned.",
+            detection_method="CORS response-header inspection"))
 
 
 def _inspect_cookies(snapshot: ResponseSnapshot, findings: list[dict[str, str]]) -> None:
@@ -326,8 +370,13 @@ def _inspect_cookies(snapshot: ResponseSnapshot, findings: list[dict[str, str]])
             findings.append(_finding(
                 f"Cookie flags need review: {name[:60]}", "Session Management", severity,
                 "A Set-Cookie response was observed without all commonly recommended browser security attributes.",
-                f"Cookie name: {name}; missing: {', '.join(missing)}.",
-                "Set Secure on HTTPS cookies, HttpOnly for cookies not needed by JavaScript, and an appropriate SameSite value. Review each cookie's purpose.", "CWE-614"))
+                f"Set-Cookie for {name} on {snapshot.url}; missing: {', '.join(missing)}.",
+                "Set Secure on HTTPS cookies, HttpOnly for cookies not needed by JavaScript, and an appropriate SameSite value. Review each cookie's purpose.",
+                "CWE-614", affected_url=snapshot.url, confidence="confirmed",
+                observation_type="security_misconfiguration",
+                impact="Missing cookie attributes can expose session or preference data to interception or script access.",
+                verification="Inspect the Set-Cookie response again and confirm each required attribute is present.",
+                detection_method="Set-Cookie header parsing"))
 
 
 def _inspect_page(snapshot: ResponseSnapshot, findings: list[dict[str, str]]) -> None:
@@ -422,20 +471,249 @@ def _inspect_robots(session: requests.Session, base_url: str, findings: list[dic
                 "Do not rely on robots.txt for access control. Enforce authentication and authorization on every restricted route."))
 
 
-def calculate_score(findings: list[dict[str, str]]) -> int:
-    deductions = {"critical": 25, "high": 15, "medium": 8, "low": 3, "info": 0}
-    return max(0, 100 - sum(deductions.get(item.get("severity", "info"), 0) for item in findings))
+def calculate_score(findings: list[dict[str, str]], coverage: dict[str, object] | None = None) -> int | None:
+    """Calculate a bounded baseline score from unique, actionable findings.
+
+    Coverage below 50 percent is insufficient for a reliable posture score.
+    The score is not a guarantee and does not reward successful completion alone.
+    """
+    if coverage:
+        percentage = int(coverage.get("percentage", 0))
+        if percentage < 50:
+            return None
+    deductions = {"critical": 30, "high": 18, "medium": 9, "low": 4, "info": 0}
+    seen: set[str] = set()
+    total = 0
+    for item in findings:
+        fingerprint = str(item.get("fingerprint") or "")
+        if fingerprint and fingerprint in seen:
+            continue
+        if fingerprint:
+            seen.add(fingerprint)
+        if item.get("observation_type") in {"informational_observation", "security_observation"}:
+            continue
+        total += deductions.get(str(item.get("severity", "info")).lower(), 0)
+    return max(0, 100 - total)
+
+
+def _fingerprint_technologies(headers: dict[str, str], body: bytes, parser: PageParser) -> list[dict[str, str]]:
+    observations: list[dict[str, str]] = []
+    lower_body = body.lower()
+
+    for source_name, evidence in (
+        ("Server header", headers.get("server", "")),
+        ("X-Powered-By header", headers.get("x-powered-by", "")),
+    ):
+        if evidence:
+            observations.append({
+                "name": evidence,
+                "source": source_name,
+                "evidence": evidence[:240],
+                "confidence": "medium",
+                "status": "inferred",
+            })
+
+    signatures = (
+        ("WordPress", (b"/wp-content/", b"/wp-includes/", b"wp-json"), "HTML asset or API paths"),
+        ("Drupal", (b"/sites/default/files/", b"drupal-settings-json"), "HTML asset or response pattern"),
+        ("React", (b"react-dom", b"__react", b"/static/js/"), "HTML asset or JavaScript package signature"),
+        ("Next.js", (b"/_next/static/", b"__next_data__"), "HTML asset or framework response pattern"),
+        ("Vue.js", (b"data-v-", b"/__vite/", b"vue.runtime"), "HTML asset or framework response pattern"),
+        ("Bootstrap", (b"bootstrap.min.css", b"bootstrap.bundle"), "HTML asset signature"),
+        ("jQuery", (b"jquery.min.js", b"jquery-", b"/jquery.js"), "JavaScript library signature"),
+    )
+    for name, signatures_list, source in signatures:
+        evidence = next((needle.decode("utf-8", errors="ignore") for needle in signatures_list if needle in lower_body), "")
+        if evidence:
+            script_evidence = next((url for url in parser.scripts if evidence.lower().strip("/") in url.lower()), "")
+            observations.append({
+                "name": name,
+                "source": source,
+                "evidence": script_evidence or evidence,
+                "confidence": "high" if evidence else "low",
+                "status": "confirmed",
+            })
+
+    for meta in parser.meta:
+        generator = meta.get("content", "") if meta.get("name", "").lower() == "generator" else ""
+        if generator:
+            observations.append({
+                "name": generator,
+                "source": "HTML generator metadata",
+                "evidence": f"meta name=\"generator\" content=\"{generator}\"",
+                "confidence": "high",
+                "status": "confirmed",
+            })
+    return observations
+
+
+def _browser_render(start_url: str) -> dict[str, object]:
+    result = {
+        "status": "not_tested",
+        "reason": "Set WAPT_PLAYWRIGHT=1 to enable optional browser rendering.",
+        "pages": [],
+        "links": [],
+        "forms": [],
+    }
+    if os.getenv("WAPT_PLAYWRIGHT", "").lower() not in {"1", "true", "yes"}:
+        return result
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        result["reason"] = "Playwright is not installed; browser rendering was not tested."
+        return result
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                java_script_enabled=True,
+                ignore_https_errors=False,
+                viewport={"width": 1280, "height": 720},
+            )
+            base = urlsplit(start_url)
+
+            def block_external(route) -> None:
+                destination = urlsplit(route.request.url)
+                if destination.scheme not in {"http", "https"} or destination.netloc.lower() != base.netloc.lower():
+                    route.abort()
+                else:
+                    route.continue_()
+
+            context.route("**/*", block_external)
+            page = context.new_page()
+            page.set_default_navigation_timeout(7000)
+            page.set_default_timeout(7000)
+            response = page.goto(start_url, wait_until="domcontentloaded", timeout=7000)
+            page.wait_for_timeout(500)
+            html = page.content()
+            links = page.eval_on_selector_all("a[href]", "(elements) => elements.map(e => e.href)")
+            forms = page.eval_on_selector_all(
+                "form",
+                "(elements) => elements.map(f => ({action: f.action || '', method: f.method || 'get', inputs: Array.from(f.elements).map(e => e.name || e.type).filter(Boolean)}))",
+            )
+            same_origin_links = []
+            for link in links:
+                normalized = _normalize_same_origin_url(start_url, str(link))
+                if normalized:
+                    same_origin_links.append(normalized)
+            result = {
+                "status": "tested",
+                "reason": "",
+                "http_status": response.status if response else None,
+                "pages": [start_url],
+                "links": sorted(set(same_origin_links))[:MAX_CRAWL_PAGES],
+                "forms": forms[:20],
+                "rendered_dom_bytes": len(html.encode("utf-8")),
+            }
+            browser.close()
+    except PlaywrightTimeoutError:
+        result["status"] = "inconclusive"
+        result["reason"] = "Browser navigation exceeded the strict timeout."
+    except Exception as exc:
+        result["status"] = "inconclusive"
+        result["reason"] = f"Browser rendering could not be completed safely: {type(exc).__name__}"
+    return result
+
+
+def redact_url_for_recon(value: str) -> str:
+    return re.sub(r"([?&](?:token|key|password|secret|session)=[^&#]*)", r"\1[redacted]", value, flags=re.I)
+
+
+def _normalize_same_origin_url(base_url: str, link: str) -> str | None:
+    absolute = urldefrag(urljoin(base_url, link))[0]
+    parts = urlsplit(absolute)
+    base = urlsplit(base_url)
+    if parts.scheme not in {"http", "https"} or parts.netloc.lower() != base.netloc.lower():
+        return None
+    if parts.scheme != base.scheme:
+        return None
+    path = parts.path or "/"
+    if parts.query:
+        normalized = urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+    else:
+        normalized = urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+    return normalized
+
+
+def _bounded_crawl(session: requests.Session, start_url: str) -> dict[str, object]:
+    base = urlsplit(start_url)
+    queue: list[tuple[str, int]] = [(start_url, 0)]
+    visited: set[str] = set()
+    pages: list[dict[str, object]] = []
+    discovered_links: set[str] = set()
+    forms: list[dict[str, object]] = []
+    while queue and len(pages) < MAX_CRAWL_PAGES:
+        url, depth = queue.pop(0)
+        normalized = _normalize_same_origin_url(start_url, url)
+        if not normalized or normalized in visited:
+            continue
+        visited.add(normalized)
+        try:
+            snapshot = _snapshot_request(session, normalized, max_bytes=MAX_PAGE_BYTES)
+        except ScanError:
+            pages.append({"url": normalized, "status": None, "error": "Not fetched: target safety or request validation rejected it"})
+            continue
+        content_type = next((v for k, v in snapshot.headers.items() if k.lower() == "content-type"), "")
+        pages.append({"url": snapshot.url, "status": snapshot.status_code, "content_type": content_type})
+        if "html" not in content_type.lower() and not snapshot.body.lstrip().lower().startswith((b"<!doctype html", b"<html")):
+            continue
+        parser = PageParser()
+        parser.feed(snapshot.body.decode("utf-8", errors="replace"))
+        for form in parser.forms:
+            forms.append({"page": snapshot.url, **form})
+        if depth < MAX_CRAWL_DEPTH:
+            for link in parser.links:
+                link_url = _normalize_same_origin_url(snapshot.url, link)
+                if link_url and link_url not in visited:
+                    discovered_links.add(link_url)
+                    queue.append((link_url, depth + 1))
+        time.sleep(0.12)
+    return {
+        "pages": pages,
+        "pages_assessed": len(pages),
+        "links_discovered": sorted(discovered_links),
+        "forms": forms,
+        "same_origin": f"{base.scheme}://{base.netloc}",
+        "limits": {"max_pages": MAX_CRAWL_PAGES, "max_depth": MAX_CRAWL_DEPTH, "timeout_seconds": 7},
+    }
+
+
+def _tls_observations(hostname: str, port: int) -> dict[str, object]:
+    if not hostname:
+        return {"status": "not_tested", "reason": "No HTTPS hostname was available."}
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, port), timeout=5) as raw:
+            with context.wrap_socket(raw, server_hostname=hostname) as tls:
+                certificate = tls.getpeercert()
+                protocol = tls.cipher()
+        result = {
+            "status": "verified",
+            "subject": certificate.get("subject"),
+            "issuer": certificate.get("issuer"),
+            "not_before": certificate.get("notBefore"),
+            "not_after": certificate.get("notAfter"),
+            "cipher": protocol,
+        }
+        return result
+    except (OSError, ssl.SSLError, ssl.SSLCertVerificationError) as exc:
+        return {"status": "inconclusive", "reason": str(exc)}
 
 
 def scan_site(target: str) -> dict[str, object]:
     normalized = validate_target(target)
     findings: list[dict[str, str]] = []
+    observations: list[dict[str, str]] = []
+    coverage_checks: dict[str, str] = {}
     started = time.monotonic()
     initial_parts = urlsplit(normalized)
     if initial_parts.scheme == "https":
         # Run TLS verification first so an invalid certificate can still be reported
         # without disabling certificate verification for the HTTP request.
         findings.extend(check_tls(initial_parts.hostname or "", initial_parts.port or 443))
+        coverage_checks["TLS configuration"] = "tested"
 
     session = requests.Session()
     session.trust_env = False  # Do not inherit proxy settings from the host environment.
@@ -452,6 +730,9 @@ def scan_site(target: str) -> dict[str, object]:
         _inspect_headers(main, findings)
         _inspect_cookies(main, findings)
         _inspect_page(main, findings)
+        for category in ("HSTS", "CSP", "Clickjacking", "MIME sniffing", "Referrer-Policy",
+                         "Permissions-Policy", "CORS", "Cookies", "Forms"):
+            coverage_checks[category] = "tested"
         final_url = main.url
         http_status: int | None = main.status_code
         response_time_ms: int | None = main.elapsed_ms
@@ -489,26 +770,101 @@ def scan_site(target: str) -> dict[str, object]:
         try:
             _probe_exposures(probe_session, main.url, findings)
             _inspect_robots(probe_session, main.url, findings)
+            coverage_checks["Exposed resources"] = "tested"
+            coverage_checks["robots.txt"] = "tested"
+            crawl = _bounded_crawl(probe_session, main.url)
+            browser = _browser_render(main.url)
+            if browser["status"] == "tested":
+                coverage_checks["Browser-rendered coverage"] = "tested"
+            else:
+                coverage_checks["Browser-rendered coverage"] = browser["status"]
         finally:
             probe_session.close()
+    else:
+        crawl = {"pages": [], "pages_assessed": 0, "links_discovered": [], "forms": [],
+                 "same_origin": urlunsplit((initial_parts.scheme, initial_parts.netloc, "", "", "")),
+                 "limits": {"max_pages": MAX_CRAWL_PAGES, "max_depth": MAX_CRAWL_DEPTH, "timeout_seconds": 7}}
+        browser = {"status": "not_tested", "reason": "Main HTTP page was not available.", "pages": [],
+                   "links": [], "forms": []}
 
-    unique: dict[tuple[str, str], dict[str, str]] = {}
+    coverage_checks.setdefault("Main page", "tested" if main is not None else "not_tested")
+    coverage_checks.setdefault("Crawler", "tested" if main is not None and crawl["pages_assessed"] > 0 else "not_tested")
+    coverage_checks.setdefault("Exposed resources", "tested" if main is not None else "not_tested")
+    coverage_checks.setdefault("robots.txt", "tested" if main is not None else "not_tested")
+    tested = sum(1 for value in coverage_checks.values() if value == "tested")
+    total = len(coverage_checks)
+    coverage = {
+        "tested": tested,
+        "total": total,
+        "percentage": round((tested * 100 / total), 1) if total else 0,
+        "checks": coverage_checks,
+        "pages_assessed": crawl["pages_assessed"],
+        "limits": crawl["limits"],
+    }
+
+    unique: dict[str, dict[str, str]] = {}
     for item in findings:
-        unique[(item["title"], item["evidence"])] = item
+        item.setdefault("affected_url", final_url)
+        item.setdefault("confidence", "confirmed" if item["severity"] in {"critical", "high", "medium", "low"} else "informational")
+        item.setdefault("observation_type", "security_misconfiguration" if item["severity"] != "info" else "informational_observation")
+        item.setdefault("impact", item["description"])
+        item.setdefault("verification", "Compare the response and configuration again after remediation.")
+        item.setdefault("detection_method", "Targeted HTTP and TLS response inspection")
+        key = str(item.get("fingerprint") or f"{item['category']}|{item['title']}|{item['evidence'][:120]}")
+        unique[key] = item
     findings = list(unique.values())
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
     findings.sort(key=lambda item: (order.get(item["severity"], 5), item["category"], item["title"]))
     counts = {severity: sum(1 for item in findings if item["severity"] == severity)
               for severity in ("critical", "high", "medium", "low", "info")}
+    reconnaissance_headers = {}
+    if main is not None:
+        reconnaissance_headers = {str(k).lower(): str(v) for k, v in main.headers.items()}
+    recon = {
+        "target": normalized,
+        "final_url": final_url,
+        "http_status": http_status,
+        "response_time_ms": response_time_ms,
+        "content_type": next((v for k, v in reconnaissance_headers.items() if k == "content-type"), "unknown"),
+        "headers": reconnaissance_headers,
+        "cookies": [cookie.split(";", 1)[0] for cookie in (main.cookies if main is not None else [])],
+        "crawler": crawl,
+        "browser": browser,
+        "technologies": [],
+        "html_metadata": {"title": "", "meta": [], "scripts": []},
+        "api_references": [],
+        "tls": _tls_observations(final_parts.hostname or "", final_parts.port or (443 if final_parts.scheme == "https" else 80)),
+    }
+    server = reconnaissance_headers.get("server", "")
+    powered = reconnaissance_headers.get("x-powered-by", "")
+    if main is not None:
+        parser = PageParser()
+        parser.feed(main.body.decode("utf-8", errors="replace"))
+        recon["html_metadata"] = {
+            "title": parser.title.strip(),
+            "meta": parser.meta[:30],
+            "scripts": parser.scripts[:30],
+        }
+        api_matches = re.findall(r"(?:https?:)?//[^\"'\s<>]+|(?:/api/)[^\"'\s<>]+", main.body.decode("utf-8", errors="replace"), re.I)
+        recon["api_references"] = sorted(set(redact_url_for_recon(urljoin(final_url, match)) for match in api_matches))[:20]
+        recon["technologies"] = _fingerprint_technologies(reconnaissance_headers, main.body, parser)
+    if server:
+        recon["technologies"].append({"name": "Server header", "value": server, "confidence": "medium"})
+    if powered:
+        recon["technologies"].append({"name": "X-Powered-By", "value": powered, "confidence": "medium"})
     return {
         "target": normalized,
         "final_url": final_url,
         "http_status": http_status,
         "response_time_ms": response_time_ms,
         "duration_seconds": round(time.monotonic() - started, 2),
-        "score": calculate_score(findings),
+        "score": calculate_score(findings, coverage),
+        "coverage": coverage,
+        "reconnaissance": recon,
+        "observations": observations,
         "counts": counts,
         "findings": findings,
-        "scanner_version": "1.0.0",
+        "scanner_version": "2.0.0",
+        "methodology_version": "WAPT-Baseline-2",
         "scope_note": "Safe baseline checks only. No credential attacks, destructive tests, or exploit payloads were executed.",
     }

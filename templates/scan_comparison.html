@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block title %}Assessment comparison · WAPT Security Console{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="{{ url_for('dashboard') }}">Overview</a><span>/</span><a href="{{ url_for('scan_detail', scan_id=scan.id) }}">Assessment #{{ scan.id }}</a><span>/</span><span>Comparison</span></div>
+<section class="page-heading report-heading">
+  <div><span class="eyebrow">Historical assessment comparison</span><h1>Finding changes</h1><p class="report-target">{{ scan.target }}</p></div>
+</section>
+<section class="report-summary-grid">
+  <article class="panel report-stat"><span class="eyebrow">Previous score</span><strong>{{ comparison.previous.score if comparison.previous.score is not none else '—' }}</strong><small>{{ comparison.previous.created_at[:19].replace('T', ' ') }} UTC</small></article>
+  <article class="panel report-stat"><span class="eyebrow">Current score</span><strong>{{ comparison.current.score if comparison.current.score is not none else '—' }}</strong><small>{{ comparison.current.created_at[:19].replace('T', ' ') }} UTC</small></article>
+  <article class="panel report-stat"><span class="eyebrow">Coverage change</span><strong>{{ comparison.current.coverage.get('percentage', 0) }}%</strong><small>Previous: {{ comparison.previous.coverage.get('percentage', 0) }}%</small></article>
+</section>
+<section class="panel findings-panel">
+  <div class="panel-heading"><div><span class="eyebrow">Comparison result</span><h2>New findings</h2></div><span class="history-count">{{ comparison.new|length }}</span></div>
+  {% if comparison.new %}
+  <div class="finding-list">{% for finding in comparison.new %}<article class="finding-card"><span class="severity-badge {{ finding.severity }}">{{ finding.severity|upper }}</span><h3>{{ finding.title }}</h3><p class="finding-description">{{ finding.evidence }}</p></article>{% endfor %}</div>
+  {% else %}<div class="empty-state"><strong>No new fingerprints</strong><p>No additional finding fingerprints were observed.</p></div>{% endif %}
+</section>
+<section class="panel findings-panel">
+  <div class="panel-heading"><div><span class="eyebrow">Resolved with tested coverage</span><h2>Resolved findings</h2></div><span class="history-count">{{ comparison.resolved|length }}</span></div>
+  {% if comparison.resolved %}
+  <div class="finding-list">{% for finding in comparison.resolved %}<article class="finding-card"><span class="severity-badge {{ finding.severity }}">{{ finding.severity|upper }}</span><h3>{{ finding.title }}</h3><p class="finding-description">{{ finding.evidence }}</p></article>{% endfor %}</div>
+  {% else %}<div class="empty-state"><strong>No safely resolved findings</strong><p>A finding is marked resolved only when the relevant check was tested in the current assessment.</p></div>{% endif %}
+</section>
+<section class="panel findings-panel">
+  <div class="panel-heading"><div><span class="eyebrow">Unchanged fingerprints</span><h2>Persistent findings</h2></div><span class="history-count">{{ comparison.persistent|length }}</span></div>
+  {% if comparison.persistent %}
+  <div class="finding-list">{% for finding in comparison.persistent %}<article class="finding-card"><span class="severity-badge {{ finding.severity }}">{{ finding.severity|upper }}</span><h3>{{ finding.title }}</h3><p class="finding-description">{{ finding.evidence }}</p></article>{% endfor %}</div>
+  {% else %}<div class="empty-state"><strong>No persistent findings</strong></div>{% endif %}
+</section>
+<section class="panel findings-panel">
+  <div class="panel-heading"><div><span class="eyebrow">Severity or evidence changed</span><h2>Changed findings</h2></div><span class="history-count">{{ comparison.changed|length }}</span></div>
+  {% if comparison.changed %}
+  <div class="finding-list">{% for change in comparison.changed %}<article class="finding-card"><h3>{{ change.current.title }}</h3><p class="finding-description">Previous severity: {{ change.previous.severity|upper }}; current severity: {{ change.current.severity|upper }}</p><div class="finding-evidence"><span>Current evidence</span><p>{{ change.current.evidence }}</p></div></article>{% endfor %}</div>
+  {% else %}<div class="empty-state"><strong>No changed findings</strong></div>{% endif %}
+</section>
+{% endblock %}
